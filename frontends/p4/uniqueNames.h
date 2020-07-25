@@ -95,11 +95,12 @@ class FindSymbols : public Inspector {
 class RenameSymbols : public Transform {
     ReferenceMap *refMap;
     RenameMap    *renameMap;
+    bool dropOriginal;
 
     IR::ID* getName() const;
  public:
-    RenameSymbols(ReferenceMap *refMap, RenameMap *renameMap) :
-            refMap(refMap), renameMap(renameMap) {
+    RenameSymbols(ReferenceMap *refMap, RenameMap *renameMap, bool dropOriginal = false) :
+            refMap(refMap), renameMap(renameMap), dropOriginal(dropOriginal) {
         CHECK_NULL(refMap); CHECK_NULL(renameMap);
         visitDagOnce = false;
         setName("RenameSymbols"); }

@@ -27,7 +27,9 @@ namespace BMV2 {
 
 class SimpleSwitchMidEnd : public MidEnd {
  public:
-    explicit SimpleSwitchMidEnd(CompilerOptions& options);
+    explicit SimpleSwitchMidEnd(CompilerOptions& options,
+                                std::function<bool(const Visitor::Context *, const IR::Expression *)> policy =
+                                  [](const Visitor::Context *, const IR::Expression *) -> bool { return true; });
 };
 
 }  // namespace BMV2

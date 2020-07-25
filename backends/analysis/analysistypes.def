@@ -1,0 +1,78 @@
+class CodeEvent : StatOrDecl {
+    static const unsigned START = 0;
+    static const unsigned END = 1;
+
+    unsigned eventType = START;
+    const IR::Node *original;
+
+    visit_children {}
+}
+
+class Method_Implementation : Function, IAnnotated, IMayBeGenericType {
+    optional Annotations annotations = Annotations::empty;
+    Method overrides;
+    optional TypeParameters typeParameters = new TypeParameters;
+    #apply
+    #nodbprint
+    visit_children {}
+    toString { return cstring("implementation ") + externalName(); }
+    Annotations getAnnotations() const override { return annotations; }
+    IR::TypeParameters const * getTypeParameters() const {
+        return typeParameters;
+    }
+}
+class Type_Implementation : Type_Declaration, IGeneralNamespace, IAnnotated, IMayBeGenericType {
+    optional Annotations annotations = Annotations::empty;
+    optional inline IndexedVector<StructField>  fields;
+    inline Vector<Type> overrides;
+    inline Vector<Function> functions;
+    optional TypeParameters typeParameters = new TypeParameters;
+    Annotations getAnnotations() const override { return annotations; }
+    #apply
+    validate {
+    }
+    toString { return cstring("class ") + externalName(); }
+    #nodbprint
+    visit_children {}
+    Util::Enumerator<IDeclaration>* getDeclarations() const override {
+        return functions.getEnumerator()->as<const IDeclaration*>()->concat(fields.getDeclarations());
+    }
+    IR::TypeParameters const * getTypeParameters() const {
+        return typeParameters;
+    }
+}
+
+class P4PackageModel : Type_Declaration, ISimpleNamespace, IAnnotated, IApply, IContainer {
+    optional Annotations        annotations = Annotations::empty;
+    Type_Control                                type;
+    optional ParameterList                      constructorParams = new ParameterList;
+    optional inline IndexedVector<Declaration>  controlLocals;
+    BlockStatement                              body;
+
+    TypeParameters getTypeParameters() const override { return type->getTypeParameters(); }
+    Util::Enumerator<IDeclaration>* getDeclarations() const override {
+        return controlLocals.getDeclarations(); }
+    Type_Method getApplyMethodType() const override { return type->getApplyMethodType(); }
+    ParameterList getApplyParameters() const override { return type->getApplyParameters(); }
+    Type_Method getConstructorMethodType() const override;
+    IDeclaration getDeclByName(cstring name) const override {
+        return controlLocals.getDeclaration(name); }
+    ParameterList getConstructorParameters() const override { return constructorParams; }
+    Annotations getAnnotations() const override { return annotations; }
+#apply
+    validate {
+        if (!(name == type->name))
+            BUG("Name mismatch for %1%: %2% != %3%", this, name, type->name);
+        controlLocals.check_null();
+    }
+    toString { return cstring("package_model ") + externalName(); }
+}
+class P4PackageModelBlock : InstantiatedBlock {
+    P4PackageModel container;
+    ParameterList getConstructorParameters() const override {
+        return container->constructorParams; }
+    toString { return container->toString(); }
+    ID getName() const override { return container->getName(); }
+    const IDeclaration* getContainer() const override { return container; }
+#nodbprint
+}

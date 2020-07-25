@@ -17,12 +17,18 @@ limitations under the License.
 #ifndef _MIDEND_PARSERUNROLL_H_
 #define _MIDEND_PARSERUNROLL_H_
 
+#include <p4/parserCallGraph.h>
+#include <lib/path.h>
+#include <lib/nullstream.h>
+#include <boost/algorithm/string.hpp>
 #include "ir/ir.h"
 #include "frontends/common/resolveReferences/referenceMap.h"
 #include "frontends/p4/typeChecking/typeChecker.h"
 #include "frontends/p4/typeMap.h"
 #include "frontends/p4/callGraph.h"
 #include "interpreter.h"
+#include<fstream>
+#include <p4/simplifyParsers.h>
 
 namespace P4 {
 
@@ -50,6 +56,17 @@ class ParserInfo {
     // for each original state a vector of states produced by unrolling
     std::map<cstring, std::vector<ParserStateInfo*>*> states;
  public:
+    const std::vector<ParserStateInfo*>* get(cstring origState) const {
+        std::vector<ParserStateInfo*> *vec;
+        auto it = states.find(origState);
+        if (it == states.end()) {
+            return nullptr;
+        } else {
+            vec = it->second;
+        }
+        return vec;
+    }
+
     std::vector<ParserStateInfo*>* get(cstring origState) {
         std::vector<ParserStateInfo*> *vec;
         auto it = states.find(origState);
@@ -90,8 +107,23 @@ class ParserStructure {
     { return ::get(stateMap, state); }
     void calls(const IR::ParserState* caller, const IR::ParserState* callee)
     { callGraph->calls(caller, callee); }
+    void rmCall(const IR::ParserState* caller, const IR::ParserState* callee) {
+        auto callees = callGraph->getCallees(caller);
+        if (callees) {
+            auto IT = std::find(callees->begin(), callees->end(), callee);
+            if (IT != callees->end())
+                callees->erase(IT);
+        }
+    }
+    bool hasCallees(const IR::ParserState* caller) {
+        if (caller) {
+            auto callees = callGraph->getCallees(caller);
+            return callees && !callees->empty();
+        }
+        return false;
+    }
 
-    void analyze(ReferenceMap* refMap, TypeMap* typeMap, bool unroll);
+    void analyze(ReferenceMap* refMap, TypeMap* typeMap, bool unroll, bool verbose = true);
 };
 
 class AnalyzeParser : public Inspector {
@@ -108,7 +140,69 @@ class AnalyzeParser : public Inspector {
     void postorder(const IR::PathExpression* expression) override;
 };
 
-#if 0
+class SubParserSpec {
+public:
+    virtual bool contains(const IR::P4Parser *, const IR::ParserState *, const IR::ParserState *) const = 0;
+};
+
+class TakeAllSubparserSpec final : public SubParserSpec {
+public:
+    bool contains(const IR::P4Parser *, const IR::ParserState *, const IR::ParserState *) const override {
+        return true;
+    }
+};
+
+class SimpleSubparserSpec : public SubParserSpec {
+    mutable ordered_map<cstring, ordered_set<std::pair<cstring, cstring> > > filtered_transitions;
+public:
+    static SubParserSpec *fromFile(cstring file) {
+        ordered_map<cstring, ordered_set<std::pair<cstring, cstring> > > filtered;
+        auto path = Util::PathName(file);
+        auto in = std::ifstream(path.toString());
+        if (!in.is_open()) {
+            ::error("Failed to open file %1%", path.toString());
+            return nullptr;
+        }
+        std::string line = "";
+        while (getline(in, line)) {
+            std::vector<std::string> vec;
+            boost::algorithm::split(vec, line, boost::is_any_of(","));
+            if (vec.size() == 3) {
+                filtered[vec[0]].emplace(vec[1], vec[2]);
+            } else {
+                WARNING("skipping bad input in slash file " << line);
+            }
+        }
+        if (filtered.empty()) {
+            return new TakeAllSubparserSpec;
+        } else {
+            return new SimpleSubparserSpec(std::move(filtered));
+        }
+    }
+
+    SimpleSubparserSpec(ordered_map<cstring, ordered_set<std::pair<cstring, cstring> > > &&filtered_transitions) :
+            filtered_transitions(filtered_transitions) {}
+
+    bool contains(const IR::P4Parser *parser, const IR::ParserState *from, const IR::ParserState *to) const override {
+        return filtered_transitions[parser->getName().originalName].count(std::make_pair(from->getName().originalName,
+                                         to->getName().originalName)) == 0;
+    }
+};
+
+class SlashParser : public Transform {
+    const ReferenceMap* refMap;
+    const SubParserSpec *spec;
+public:
+    SlashParser(const ReferenceMap* refMap, const SubParserSpec *spec) :
+            refMap(refMap), spec(spec) {
+        CHECK_NULL(refMap); setName("SlashParser");
+        visitDagOnce = false;
+    }
+
+    const IR::Node *postorder(IR::PathExpression* path) override;
+};
+
+#if 1
 class ParserUnroller : public Transform {
     ReferenceMap*    refMap;
     TypeMap*         typeMap;
@@ -120,15 +214,50 @@ class ParserUnroller : public Transform {
         setName("ParserUnroller");
         visitDagOnce = false;
     }
+
+    const IR::Node *postorder(IR::P4Parser *) override;
 };
 #endif
 
+
+class ParserAnalyzer : public PassManager {
+public:
+    ParserStructure  current;
+
+    ParserAnalyzer(ReferenceMap* refMap, TypeMap* typeMap) {
+        CHECK_NULL(refMap); CHECK_NULL(typeMap);
+
+        passes.push_back(new AnalyzeParser(refMap, &current));
+        passes.push_back(new VisitFunctor (
+                [this, refMap, typeMap](const IR::Node* root) -> const IR::Node* {
+                    current.analyze(refMap, typeMap, false, false);
+                    return root;
+                }));
+    }
+
+    ValueMap *getValues() const {
+        auto accept = current.result->get(IR::ParserState::accept);
+        if (!accept)
+            return nullptr;
+        return accept->back()->before;
+    }
+
+    Visitor::profile_t init_apply(const IR::Node* node) override {
+        LOG1("Scanning " << node);
+        BUG_CHECK(node->is<IR::P4Parser>(), "%1%: expected a parser", node);
+        current.parser = node->to<IR::P4Parser>();
+        return PassManager::init_apply(node);
+    }
+};
+
 // Applied to a P4Parser object.
 class ParserRewriter : public PassManager {
+public:
     ParserStructure  current;
- public:
+
     ParserRewriter(ReferenceMap* refMap, TypeMap* typeMap, bool unroll) {
         CHECK_NULL(refMap); CHECK_NULL(typeMap);
+
         passes.push_back(new AnalyzeParser(refMap, &current));
         passes.push_back(new VisitFunctor (
             [this, refMap, typeMap, unroll](const IR::Node* root) -> const IR::Node* {
@@ -144,7 +273,7 @@ class ParserRewriter : public PassManager {
         LOG1("Scanning " << node);
         BUG_CHECK(node->is<IR::P4Parser>(), "%1%: expected a parser", node);
         current.parser = node->to<IR::P4Parser>();
-        return Visitor::init_apply(node);
+        return PassManager::init_apply(node);
     }
 };
 
@@ -165,8 +294,23 @@ class RewriteAllParsers : public Transform {
     }
 };
 
+class ParserSlash : public PassManager {
+    ParserCallGraph transitions;
+    SubParserSpec *slash_spec;
+public:
+    ParserSlash(ReferenceMap* refMap, TypeMap* typeMap, SubParserSpec *slash_spec) :
+            transitions("transitions"), slash_spec(slash_spec) {
+        passes.push_back(new TypeChecking(refMap, typeMap));
+        passes.push_back(new SlashParser(refMap, slash_spec));
+        passes.push_back(new TypeChecking(refMap, typeMap));
+        passes.push_back(new ComputeParserCG(refMap, &transitions));
+        passes.push_back(new P4::SimplifyParsers(refMap));
+        setName("ParserSlash");
+    }
+};
+
 class ParsersUnroll : public PassManager {
- public:
+public:
     ParsersUnroll(bool unroll, ReferenceMap* refMap, TypeMap* typeMap) {
         passes.push_back(new TypeChecking(refMap, typeMap));
         passes.push_back(new RewriteAllParsers(refMap, typeMap, unroll));

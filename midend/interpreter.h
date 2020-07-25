@@ -109,7 +109,8 @@ class ValueMap final : public IHasDbPrint {
         for (auto d : map) {
             auto v = other->get(d.first);
             CHECK_NULL(v);
-            change = change || d.second->merge(v);
+            auto b = d.second->merge(v);
+            change = b || change;
         }
         return change;
     }
@@ -126,6 +127,7 @@ class ValueMap final : public IHasDbPrint {
 };
 
 class ExpressionEvaluator : public Inspector {
+public:
     ReferenceMap*       refMap;
     TypeMap*            typeMap;  // updated if constant folding happens
     ValueMap*           valueMap;
@@ -133,7 +135,7 @@ class ExpressionEvaluator : public Inspector {
     bool evaluatingLeftValue = false;
 
     std::map<const IR::Expression*, SymbolicValue*> value;
-
+private:
     SymbolicValue* set(const IR::Expression* expression, SymbolicValue* v)
     { value.emplace(expression, v); return v; }
     SymbolicValue* get(const IR::Expression* expression) const {
@@ -144,6 +146,9 @@ class ExpressionEvaluator : public Inspector {
     void postorder(const IR::Constant* expression) override;
     void postorder(const IR::BoolLiteral* expression) override;
     void postorder(const IR::Operation_Binary* expression) override;
+    void postorder(const IR::LAnd* expression) override;
+    void postorder(const IR::LOr* expression) override;
+    void postorder(const IR::Mux *expression) override;
     void postorder(const IR::Operation_Relation* expression) override;
     void postorder(const IR::Operation_Unary* expression) override;
     void postorder(const IR::PathExpression* expression) override;
@@ -152,6 +157,9 @@ class ExpressionEvaluator : public Inspector {
     void postorder(const IR::ArrayIndex* expression) override;
     void postorder(const IR::ListExpression* expression) override;
     void postorder(const IR::MethodCallExpression* expression) override;
+    bool preorder(const IR::Slice *expression) override;
+    bool preorder(const IR::Cast *cast) override;
+    bool preorder(const IR::Declaration_Constant *) override;
 
  public:
     ExpressionEvaluator(ReferenceMap* refMap, TypeMap* typeMap, ValueMap* valueMap) :
@@ -293,6 +301,43 @@ class SymbolicBool final : public ScalarValue {
         result->value = value;
         return result;
     }
+    SymbolicBool *operator!() const {
+        if (isUninitialized())
+            return this->clone()->to<SymbolicBool>();
+        if (isKnown()) {
+            return new SymbolicBool(!value);
+        } else {
+            return new SymbolicBool(ValueState::NotConstant);
+        }
+    }
+    SymbolicBool *operator||(const SymbolicBool *other) const {
+        if (!other)
+            return this->clone()->to<SymbolicBool>();
+        if (other->isKnown() && other->value)
+            return other->clone()->to<SymbolicBool>();
+        else if (other->isKnown() && !other->value)
+            return this->clone()->to<SymbolicBool>();
+        else if (isKnown() && !value)
+            return other->clone()->to<SymbolicBool>();
+        else if (isKnown() && value)
+            return this->clone()->to<SymbolicBool>();
+        else
+            return new SymbolicBool(ValueState::NotConstant);
+    }
+    SymbolicBool *operator&&(const SymbolicBool *other) const {
+        if (!other)
+            return this->clone()->to<SymbolicBool>();
+        if (other->isKnown() && other->value)
+            return this->clone()->to<SymbolicBool>();
+        else if (other->isKnown() && !other->value)
+            return other->clone()->to<SymbolicBool>();
+        else if (isKnown() && !value)
+            return this->clone()->to<SymbolicBool>();
+        else if (isKnown() && value)
+            return other->clone()->to<SymbolicBool>();
+        else
+            return new SymbolicBool(ValueState::NotConstant);
+    }
     void assign(const SymbolicValue* other) override;
     bool merge(const SymbolicValue* other) override;
     bool equals(const SymbolicValue* other) const override;
@@ -342,8 +387,9 @@ class SymbolicVarbit final : public ScalarValue {
 
 // represents enum, error, and match_kind
 class SymbolicEnum final : public ScalarValue {
+public:
     IR::ID value;
- public:
+
     explicit SymbolicEnum(const IR::Type* type) :
             ScalarValue(ScalarValue::ValueState::Uninitialized, type) {}
     SymbolicEnum(ScalarValue::ValueState state, const IR::Type* type, const IR::ID value) :

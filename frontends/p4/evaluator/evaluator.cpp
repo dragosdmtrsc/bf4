@@ -192,6 +192,18 @@ Evaluator::processConstructor(
         }
         popBlock(block);
         return block;
+    } else if (decl->is<IR::P4PackageModel>()) {
+        auto cont = decl->to<IR::P4PackageModel>();
+        auto block = new IR::P4PackageModelBlock(node->srcInfo, node, instanceType, cont);
+        pushBlock(block);
+        auto values = evaluateArguments(cont->getConstructorParameters(), arguments, current);
+        if (values != nullptr) {
+            block->instantiate(values);
+            for (auto a : cont->controlLocals)
+                visit(a);
+        }
+        popBlock(block);
+        return block;
     } else if (decl->is<IR::P4Parser>()) {
         auto cont = decl->to<IR::P4Parser>();
         auto block = new IR::ParserBlock(node->srcInfo, node, instanceType, cont);

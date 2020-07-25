@@ -84,6 +84,7 @@ class RemoveUnusedDeclarations : public Transform {
     const IR::Node* preorder(IR::Declaration_Instance* decl) override;
 
     // The following kinds of nodes are not deleted even if they are unreferenced
+    const IR::Node *preorder(IR::P4PackageModel *a) override { prune(); return a; }
     const IR::Node* preorder(IR::Type_Error* type) override
     { prune(); return type; }
     const IR::Node* preorder(IR::Declaration_MatchKind* decl) override

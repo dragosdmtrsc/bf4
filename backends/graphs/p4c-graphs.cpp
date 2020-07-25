@@ -15,6 +15,8 @@ limitations under the License.
 */
 
 #include "backends/graphs/version.h"
+#include <midend/parserUnroll.h>
+#include <p4/simplifyParsers.h>
 #include "ir/ir.h"
 #include "lib/log.h"
 #include "lib/error.h"
@@ -36,7 +38,7 @@ limitations under the License.
 namespace graphs {
 
 class MidEnd : public PassManager {
- public:
+public:
     P4::ReferenceMap    refMap;
     P4::TypeMap         typeMap;
     IR::ToplevelBlock   *toplevel = nullptr;
@@ -53,10 +55,10 @@ MidEnd::MidEnd(CompilerOptions& options) {
     refMap.setIsV1(isv1);
     auto evaluator = new P4::EvaluatorPass(&refMap, &typeMap);
     setName("MidEnd");
-
-    addPasses({
-        evaluator,
-        new VisitFunctor([this, evaluator]() { toplevel = evaluator->getToplevelBlock(); }),
+    addPasses({evaluator,
+               new VisitFunctor([this, evaluator]() {
+                   toplevel = evaluator->getToplevelBlock();
+               })
     });
 }
 

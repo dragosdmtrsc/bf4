@@ -93,6 +93,30 @@ struct standard_metadata_t {
     /// set packet priority
     @alias("intrinsic_metadata.priority")
     bit<3> priority;
+
+    @alias("intrinsic_metadata.deflection_flag")
+    bit<1> deflection_flag;
+
+    @alias("intrinsic_metadata.deflect_on_drop")
+    bit<1> deflect_on_drop;
+
+    @alias("intrinsic_metadata.enq_congest_stat")
+    bit<2> enq_congest_stat;
+
+    @alias("intrinsic_metadata.deq_congest_stat")
+    bit<2> deq_congest_stat;
+
+    @alias("intrinsic_metadata.mcast_hash")
+    bit<13> mcast_hash;
+
+    @alias("intrinsic_metadata.ingress_cos")
+    bit<3> ingress_cos;
+
+    @alias("intrinsic_metadata.packet_color")
+    bit<2> packet_color;
+
+    @alias("intrinsic_metadata.qid")
+    bit<5> qid;
 }
 
 enum CounterType {
@@ -397,10 +421,6 @@ extern void clone(in CloneType type, in bit<32> session);
 extern void clone3<T>(in CloneType type, in bit<32> session, in T data);
 
 extern void truncate(in bit<32> length);
-
-
-extern void assert(in bool check);
-extern void assume(in bool check);
 
 // The name 'standard_metadata' is reserved
 

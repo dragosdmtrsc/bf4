@@ -34,6 +34,7 @@ OPTION (ENABLE_BMV2 "Build the BMV2 backend (required for the full test suite)" 
 OPTION (ENABLE_EBPF "Build the EBPF backend (required for the full test suite)" ON)
 OPTION (ENABLE_P4TEST "Build the P4Test backend (required for the full test suite)" ON)
 OPTION (ENABLE_P4C_GRAPHS "Build the p4c-graphs backend" ON)
+OPTION (ENABLE_ANALYSIS "Build the p4c-graphs backend" ON)
 OPTION (ENABLE_PROTOBUF_STATIC "Link against Protobuf statically" ON)
 OPTION (ENABLE_GC "Use libgc" ON)
 OPTION (ENABLE_MULTITHREAD "Use multithreading" OFF)
@@ -252,7 +253,11 @@ foreach (ext ${p4c_extensions})
     endif()
   endif()
 endforeach(ext)
-
+#massive hack - need to make the analysis backed an extension
+#TODO: please remove this
+if (ENABLE_ANALYSIS AND HAVE_LIBBOOST_GRAPH EQUAL 1)
+    add_subdirectory (backends/analysis)
+endif ()
 add_subdirectory (frontends)
 add_subdirectory (midend)
 add_subdirectory (control-plane)
@@ -272,7 +277,6 @@ endif ()
 if (ENABLE_GTESTS)
   add_subdirectory (test)
 endif ()
-
 # IR Generation
 set_source_files_properties(${IR_GENERATOR} PROPERTIES GENERATED TRUE)
 

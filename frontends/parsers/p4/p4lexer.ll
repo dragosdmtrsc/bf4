@@ -126,6 +126,9 @@ using Parser = P4::P4Parser;
 "type"          { BEGIN(driver.saveState); return makeToken(TYPE); }
 "out"           { BEGIN(driver.saveState); return makeToken(OUT); }
 "parser"        { BEGIN(driver.saveState); return makeToken(PARSER); }
+"package_model" { BEGIN(driver.saveState); return makeToken(PACKAGEMODEL); }
+"class"         { BEGIN(driver.saveState); return makeToken(CLASS); }
+"implements"    { BEGIN(driver.saveState); return makeToken(IMPLEMENTS); }
 "package"       { BEGIN(driver.saveState); return makeToken(PACKAGE); }
 "return"        { BEGIN(driver.saveState); return makeToken(RETURN); }
 "select"        { BEGIN(driver.saveState); return makeToken(SELECT); }

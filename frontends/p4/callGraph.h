@@ -272,11 +272,16 @@ class CallGraph {
         std::set<T>    onStack;
         std::map<T, unsigned> index;
         std::map<T, unsigned> lowlink;
+        std::vector<Set> sccs;
 
         sccInfo() : crtIndex(0) {}
         void push(T node) {
             stack.push_back(node);
             onStack.emplace(node);
+        }
+        Set &currentSCC() {
+            sccs.emplace_back();
+            return sccs.back();
         }
         bool isOnStack(T node)
         { return onStack.count(node) != 0; }
@@ -329,10 +334,12 @@ class CallGraph {
         if (get(helper.lowlink, node) == get(helper.index, node)) {
             LOG1(cgMakeString(node) << " index=" << get(helper.index, node)
                       << " lowlink=" << get(helper.lowlink, node));
+            auto &crt = helper.currentSCC();
             while (true) {
                 T sccMember = helper.pop();
                 LOG1("Scc order " << cgMakeString(sccMember) << "[" << cgMakeString(node) << "]");
                 out.push_back(sccMember);
+                crt.emplace(sccMember);
                 if (sccMember == node)
                     break;
                 loop = true;
@@ -350,6 +357,16 @@ class CallGraph {
     bool sccSort(T start, std::vector<T> &out) {
         sccInfo helper;
         return strongConnect(start, helper, out);
+    }
+    // Sort that computes strongly-connected components - all nodes in
+    // a strongly-connected components will be consecutive in the
+    // sort.  Returns true if the graph contains at least one
+    // cycle.  Ignores nodes not reachable from 'start'.
+    bool sccSort(T start, std::vector<T> &out, std::vector<Set> &sccs) {
+      sccInfo helper;
+      auto b = strongConnect(start, helper, out);
+      sccs = std::move(helper.sccs);
+      return b;
     }
     bool sort(std::vector<T> &start, std::vector<T> &out) {
         sccInfo helper;

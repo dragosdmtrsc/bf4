@@ -24,81 +24,7 @@ limitations under the License.
 
 namespace P4 {
 
-/// Helper class to indicate types of nodes that may be returned during resolution.
-enum class ResolutionType {
-    Any,
-    Type,
-    TypeVariable
-};
-
-/// Data structure representing a stack of nested namespaces.
-class ResolutionContext : public IHasDbPrint {
-    /// Stack of nested namespaces
-    std::vector<const IR::INamespace*> stack;
-    /// Root namespace for the program.
-    const IR::INamespace* rootNamespace;
-    /// Stack of namespaces for global declarations (e.g., match_kind)
-    std::vector<const IR::INamespace*> globals;
-    // Note that all errors have been merged by the parser into
-    // a single error { } namespace.
-
-    std::vector<const IR::Vector<IR::Argument>*> argumentStack;
-
- public:
-    explicit ResolutionContext(const IR::INamespace* rootNamespace) :
-            rootNamespace(rootNamespace)
-    { push(rootNamespace); }
-
-    void dbprint(std::ostream& out) const;
-
-    /// Add name space @p e to `globals`.
-    void addGlobal(const IR::INamespace* e) {
-        globals.push_back(e);
-    }
-
-    /// We are resolving a method call.  Remember the arguments.
-    void enterMethodCall(const IR::Vector<IR::Argument>* args) {
-        argumentStack.push_back(args);
-    }
-
-    /// We are done resolving a method call.
-    void exitMethodCall() {
-        argumentStack.pop_back();
-    }
-
-    /// Add name space @p element to `stack`.
-    void push(const IR::INamespace* element) {
-        CHECK_NULL(element);
-        stack.push_back(element);
-    }
-
-    /// Remove namespace @p element from `stack`
-    /// @pre: `stack` must not be empty and `element` must be back element
-    /// @post: first occurrence of `element` is removed from stack
-    void pop(const IR::INamespace* element) {
-        if (stack.empty())
-            BUG("Empty stack in ResolutionContext::pop");
-        const IR::INamespace* node = stack.back();
-        if (node != element)
-            BUG("Expected %1% on stack, found %2%", element, node);
-        stack.pop_back();
-    }
-    void done();
-
-    /// Resolve references for @p name, restricted to @p type declarations.
-    /// If @p forwardOK is `false`, the referenced location must precede the location of @p name.
-    std::vector<const IR::IDeclaration*>*
-    resolve(IR::ID name, ResolutionType type, bool forwardOK) const;
-
-    /// Resolve reference for @p name, restricted to @p type declarations, and expect one result.
-    /// If @p forwardOK is `false`, the referenced location must precede the location of @p name.
-    const IR::IDeclaration*
-    resolveUnique(IR::ID name, ResolutionType type, bool forwardOK) const;
-
-    // Resolve a refrence to a type @p type.
-    const IR::Type *resolveType(const IR::Type *type) const;
-};
-
+class ResolutionContext;
 /** Inspector that computes `refMap`: a map from paths to declarations.
  *
  * @pre: None
@@ -126,7 +52,7 @@ class ResolveReferences : public Inspector {
     /// If @true, then warn if one declaration shadows another.
     bool checkShadow;
 
- private:
+  protected:
     /// Add namespace @p ns to `context`
     void addToContext(const IR::INamespace* ns);
 
@@ -158,6 +84,7 @@ class ResolveReferences : public Inspector {
     bool preorder(const IR::TYPE* t) override;  \
     void postorder(const IR::TYPE* t) override; \
 
+    DECLARE(P4PackageModel)
     DECLARE(P4Program)
     DECLARE(P4Control)
     DECLARE(P4Parser)

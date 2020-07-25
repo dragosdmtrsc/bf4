@@ -388,9 +388,6 @@ extern bool psa_recirculate(in psa_egress_output_metadata_t istd,
                             in psa_egress_deparser_input_metadata_t edstd);
 
 
-extern void assert(in bool check);
-extern void assume(in bool check);
-
 // BEGIN:Match_kinds
 match_kind {
     range,   /// Used to represent min..max intervals

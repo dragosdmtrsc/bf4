@@ -97,6 +97,19 @@ const IR::Node* MoveDeclarations::postorder(IR::Declaration_Constant* decl) {
     return nullptr;
 }
 
+const IR::Node *MoveDeclarations::postorder(IR::P4PackageModel *control) {
+    LOG1("Visiting " << control << " toMove " << toMove.size());
+    auto decls = new IR::IndexedVector<IR::Declaration>();
+    for (auto decl : *getMoves()) {
+        LOG1("Moved " << decl);
+        decls->push_back(decl);
+    }
+    decls->append(control->controlLocals);
+    control->controlLocals = *decls;
+    pop();
+    return control;
+}
+
 const IR::Node* MoveInitializers::postorder(IR::Declaration_Variable* decl) {
     if (getContext() == nullptr)
         return decl;

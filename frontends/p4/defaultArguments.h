@@ -17,6 +17,7 @@ limitations under the License.
 #ifndef _FRONTENDS_P4_DEFAULTARGUMENTS_H_
 #define _FRONTENDS_P4_DEFAULTARGUMENTS_H_
 
+#include <p4/typeChecking/typeChecker.h>
 #include "ir/ir.h"
 #include "frontends/common/resolveReferences/referenceMap.h"
 #include "frontends/p4/typeChecking/typeChecker.h"

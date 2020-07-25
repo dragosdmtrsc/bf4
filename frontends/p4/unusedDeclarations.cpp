@@ -98,11 +98,20 @@ const IR::Node* RemoveUnusedDeclarations::preorder(IR::Declaration_Variable* dec
 
 const IR::Node* RemoveUnusedDeclarations::process(const IR::IDeclaration* decl) {
     LOG3("Visiting " << decl);
-    if (decl->getName().name == IR::ParserState::verify && getParent<IR::P4Program>())
+    if ((decl->is<IR::P4PackageModel>() ||
+      decl->getName().name == IR::ParserState::verify ||
+      decl->getName().name == "bug") && getParent<IR::P4Program>())
         return decl->getNode();
     if (refMap->isUsed(getOriginal<IR::IDeclaration>()))
         return decl->getNode();
     LOG3("Removing " << getOriginal());
+    if (decl->is<IR::Function>() && getParent<IR::P4Program>()) {
+        if (decl->getName() == "copy_field_list") {
+            //TODO: clean way of passing policy to NOT
+            //remove unused declarations
+            return decl->getNode();
+        }
+    }
     prune();  // no need to go deeper
     return nullptr;
 }
@@ -120,7 +129,7 @@ const IR::Node* RemoveUnusedDeclarations::preorder(IR::Declaration_Instance* dec
             type = type->to<IR::Type_Specialized>()->baseType;
         if (type->is<IR::Type_Name>())
             type = refMap->getDeclaration(type->to<IR::Type_Name>()->path, true)->to<IR::Type>();
-        if (!type->is<IR::Type_Extern>())
+        if (!type->is<IR::Type_Extern>() && !type->is<IR::P4PackageModel>())
             return process(decl);
         prune();
         return decl;

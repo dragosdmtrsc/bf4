@@ -248,12 +248,11 @@ class StorageMap {
 
 /// Indicates a statement in the program.
 class ProgramPoint : public IHasDbPrint {
+ public:
     /// The stack is for representing calls for context-sensitive analyses: i.e.,
     /// table.apply() -> table -> action.
     /// The empty stack represents "beforeStart" (see below).
     std::vector<const IR::Node*> stack;
-
- public:
     ProgramPoint() = default;
     ProgramPoint(const ProgramPoint& other) : stack(other.stack) {}
     explicit ProgramPoint(const IR::Node* node) { stack.push_back(node); }
@@ -322,6 +321,8 @@ class ProgramPoints : public IHasDbPrint {
     { return points.cbegin(); }
     Points::const_iterator end() const
     { return points.cend(); }
+    bool contains(const ProgramPoint &p) const
+    { return points.count(p); }
 };
 
 /// List of definers for each base storage (at a specific program point).
@@ -334,6 +335,7 @@ class Definitions : public IHasDbPrint {
     Definitions() = default;
     Definitions(const Definitions& other) : definitions(other.definitions) {}
     Definitions* joinDefinitions(const Definitions* other) const;
+    Definitions* diff(const Definitions* other) const;
     /// Point writes the specified LocationSet.
     Definitions* writes(ProgramPoint point, const LocationSet* locations) const;
     void setDefintion(const BaseLocation* loc, const ProgramPoints* point)
@@ -342,11 +344,23 @@ class Definitions : public IHasDbPrint {
     void setDefinition(const LocationSet* loc, const ProgramPoints* point);
     bool hasLocation(const BaseLocation* location) const
     { return definitions.find(location) != definitions.end(); }
-    const ProgramPoints* getPoints(const BaseLocation* location) const {
-        auto r = ::get(definitions, location);
-        BUG_CHECK(r != nullptr, "%1%: no definitions", location);
-        return r; }
-    const ProgramPoints* getPoints(const LocationSet* locations) const;
+    const ProgramPoints* getPoints(const BaseLocation* location,
+                                   bool emptyIfNone) const;
+    const ProgramPoints *getPoints(const BaseLocation *location) const {
+      return getPoints(location, false);
+    }
+    const ProgramPoints* getPoints(const LocationSet* locations, bool emptyIfNone) const;
+    const ProgramPoints* getPoints(const LocationSet* locations) const {
+      return getPoints(locations, false);
+    }
+    const ProgramPoints* getPoints(const StorageLocation* loc, bool emptyIfNone) const {
+        LocationSet locset;
+        locset.addCanonical(loc);
+        return getPoints(&locset, emptyIfNone);
+    }
+    const ProgramPoints* getPoints(const StorageLocation* loc) const {
+        return getPoints(loc, false);
+    }
     bool operator==(const Definitions& other) const;
     void dbprint(std::ostream& out) const {
         if (definitions.empty())
@@ -365,13 +379,13 @@ class Definitions : public IHasDbPrint {
 };
 
 class AllDefinitions : public IHasDbPrint {
+ public:
     /// These are the definitions available AFTER each ProgramPoint.
     /// However, for ProgramPoints representing P4Control, P4Action, and P4Table
     /// the definitions are BEFORE the ProgramPoint.
     std::unordered_map<ProgramPoint, Definitions*> atPoint;
-
- public:
     StorageMap* storageMap;
+    AllDefinitions(StorageMap *storageMap) : storageMap(storageMap) {}
     AllDefinitions(ReferenceMap* refMap, TypeMap* typeMap) :
             storageMap(new StorageMap(refMap, typeMap)) {}
     Definitions* getDefinitions(ProgramPoint point, bool emptyIfNotFound = false) {
@@ -425,14 +439,23 @@ class ComputeWriteSet : public Inspector {
             callingContext(context), storageMap(source->storageMap), lhs(false) {
         visitDagOnce = false;
     }
+    virtual void enterScope(const IR::ParameterList* parameters,
+                            const IR::IndexedVector<IR::Declaration>* locals,
+                            ProgramPoint startPoint, bool clear);
     void enterScope(const IR::ParameterList* parameters,
                     const IR::IndexedVector<IR::Declaration>* locals,
-                    ProgramPoint startPoint, bool clear = true);
+                    ProgramPoint startPoint) {
+      enterScope(parameters, locals, startPoint, true);
+    }
+
     void exitScope(const IR::ParameterList* parameters,
                    const IR::IndexedVector<IR::Declaration>* locals);
     Definitions* getDefinitionsAfter(const IR::ParserState* state);
     bool setDefinitions(Definitions* defs, const IR::Node* who = nullptr);
-    ProgramPoint getProgramPoint(const IR::Node* node = nullptr) const;
+    virtual ProgramPoint getProgramPoint(const IR::Node* node) const;
+    ProgramPoint getProgramPoint() const {
+        return getProgramPoint(nullptr);
+    }
     const LocationSet* getWrites(const IR::Expression* expression) const {
         auto result = ::get(writes, expression);
         BUG_CHECK(result != nullptr, "No location set known for %1%", expression);
@@ -442,6 +465,15 @@ class ComputeWriteSet : public Inspector {
         CHECK_NULL(expression); CHECK_NULL(loc);
         writes.emplace(expression, loc);
     }
+
+    virtual ComputeWriteSet *clone(ProgramPoint pt) {
+        return new ComputeWriteSet(this, pt, currentDefinitions);
+    }
+    virtual std::vector<std::pair<const IR::IDeclaration *, P4::Definitions *>> callees(const MethodInstance *mi) const;
+
+    virtual Definitions *mergeDefinitions(const Definitions *left,
+                                          const Definitions *after,
+                                          const IR::IDeclaration *decl);
 
  public:
     explicit ComputeWriteSet(AllDefinitions* allDefinitions) :

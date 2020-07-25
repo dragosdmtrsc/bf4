@@ -191,8 +191,10 @@ inline std::ostream& operator<<(std::ostream& out, const P4::Token& t) {
 %token<Token>      TRUE FALSE THIS
 %token<Token>      ABSTRACT ACTION ACTIONS APPLY BOOL BIT CONST CONTROL DEFAULT
                    ELSE ENTRIES ENUM ERROR EXIT EXTERN HEADER HEADER_UNION IF IN INOUT
-                   INT KEY SELECT MATCH_KIND TYPE OUT PACKAGE PARSER PRAGMA RETURN STATE
+                   INT KEY SELECT MATCH_KIND TYPE OUT PACKAGEMODEL CLASS
+                   PACKAGE PARSER PRAGMA RETURN STATE
                    STRUCT SWITCH TABLE TRANSITION TUPLE TYPEDEF VARBIT VALUESET VOID
+                   IMPLEMENTS
 
 %token<cstring> IDENTIFIER TYPE_IDENTIFIER STRING_LITERAL
 %token<UnparsedConstant>  INTEGER
@@ -238,7 +240,7 @@ inline std::ostream& operator<<(std::ostream& out, const P4::Token& t) {
                                            parserStatements
 %type<IR::SwitchCase*>      switchCase
 %type<IR::Vector<IR::SwitchCase>*>  switchCases
-%type<IR::Vector<IR::Type>*>  typeArgumentList realTypeArgumentList
+%type<IR::Vector<IR::Type>*>  typeArgumentList realTypeArgumentList implClause paramTypeList
 %type<IR::ParserState*>     parserState
 %type<IR::IndexedVector<IR::ParserState>*>  parserStates
 %type<IR::Declaration*>     constantDeclaration actionDeclaration
@@ -247,13 +249,16 @@ inline std::ostream& operator<<(std::ostream& out, const P4::Token& t) {
                             parserLocalElement valueSetDeclaration
 %type<IR::Type_Declaration*>  headerTypeDeclaration structTypeDeclaration
                               headerUnionDeclaration derivedTypeDeclaration
-                              parserDeclaration controlDeclaration enumDeclaration
+                              parserDeclaration controlDeclaration
+                              packageModelDeclaration enumDeclaration
                               typedefDeclaration packageTypeDeclaration typeDeclaration
+                              classDeclaration
 %type<IR::Type_Error*>      errorDeclaration
 %type<IR::Node*>            fragment
 %type<IR::Node*>            declaration externDeclaration matchKindDeclaration
 %type<IR::Type_Parser*>     parserTypeDeclaration
 %type<IR::Type_Control*>    controlTypeDeclaration
+%type<IR::Type_Control*>    packageModelTypeDeclaration
 %type<IR::IndexedVector<IR::Declaration>*>  parserLocalElements controlLocalDeclarations
 %type<IR::StructField*>     structField
 %type<IR::IndexedVector<IR::StructField>*>  structFieldList
@@ -272,6 +277,7 @@ inline std::ostream& operator<<(std::ostream& out, const P4::Token& t) {
 %type<IR::MethodCallExpression*>  actionBinding
 %type<IR::IndexedVector<IR::NamedExpression>*> kvList
 %type<IR::NamedExpression*> kvPair
+%type<IR::Vector<IR::Function> *> classFunctionDeclarations;
 
 %left COMMA
 %nonassoc QUESTION
@@ -374,10 +380,12 @@ declaration
     | parserDeclaration       { $$ = $1; }
     | typeDeclaration         { $$ = $1; }
     | controlDeclaration      { $$ = $1; }
+    | packageModelDeclaration { $$ = $1; }
     | instantiation           { $$ = $1; }
     | errorDeclaration        { driver.onReadErrorDeclaration($1); $$ = nullptr; }
     | matchKindDeclaration    { $$ = $1; }
     | functionDeclaration     { $$ = $1; }
+    | classDeclaration        { $$ = $1; }
     ;
 
 nonTypeName
@@ -673,7 +681,7 @@ parserState
 
 parserStatements
     : /* empty */                      { $$ = new IR::IndexedVector<IR::StatOrDecl>(); }
-    | parserStatements parserStatement { $$ = $1; $1->push_back($2); }
+    | parserStatements statementOrDeclaration { $$ = $1; $1->push_back($2); }
     ;
 
 parserStatement
@@ -751,6 +759,46 @@ valueSetDeclaration
         VALUESET "<" typeName ">" "(" expression ")" name ";"
         { $$ = new IR::P4ValueSet(@9, *$9, $1, $4, $7); }
     ;
+
+
+/*************************** PACKAGE MODEL ******************/
+
+packageModelDeclaration
+    : packageModelTypeDeclaration optConstructorParameters
+      "{" controlLocalDeclarations APPLY controlBody "}"
+        { driver.structure->pop();
+          auto pl = new IR::ParameterList(@2, *$2);
+          $$ = new IR::P4PackageModel($1->name.srcInfo, $1->name, $1, pl, *$4, $6); }
+
+paramType : TYPE_IDENTIFIER
+          | TYPE_IDENTIFIER "<" typeArgumentList ">" {};
+classFunctionDeclarations: /* empty */ { $$ = new IR::Vector<IR::Function>(); }
+    | classFunctionDeclarations functionDeclaration { $$ = $1;
+        $$->push_back($2->to<IR::Function>()); };
+
+implClause : /* empty */ { $$ = new IR::Vector<IR::Type>(); }
+    | implClause IMPLEMENTS typeRef { $$ = $1; $$->push_back($3); };
+
+classDeclaration
+    : optAnnotations CLASS name { driver.structure->pushContainerType(*$3, false); }
+      optTypeParameters { driver.structure->declareTypes(&$5->parameters); }
+      implClause
+      "{" structFieldList
+          classFunctionDeclarations "}" {
+              $$ = new IR::Type_Implementation(@2+@11, *$3, $1, *$9, *$7, *$10, $5);
+              driver.structure->pop();
+          };
+
+
+packageModelTypeDeclaration
+    : optAnnotations
+        PACKAGEMODEL name { driver.structure->pushContainerType(*$3, false); }
+        optTypeParameters { driver.structure->declareTypes(&$5->parameters); }
+        "(" parameterList ")" { auto pl = new IR::ParameterList(@8, *$8);
+                                $$ = new IR::Type_Control(@3, *$3, $1, $5, pl); }
+
+/************************************************************/
+
 
 /*************************** CONTROL ************************/
 

@@ -189,6 +189,8 @@ Instantiation* Instantiation::resolve(const IR::Declaration_Instance* instance,
         return new ParserInstantiation(instance, typeArguments, pt);
     } else if (auto ct = simpleType->to<IR::P4Control>()) {
         return new ControlInstantiation(instance, typeArguments, ct);
+    } else if (auto mt = simpleType->to<IR::P4PackageModel>()) {
+        return new PackageModelInstantiation(instance, typeArguments, mt);
     }
     BUG("Unexpected instantiation %1%", instance);
     return nullptr;  // unreachable

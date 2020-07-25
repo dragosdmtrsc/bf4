@@ -435,6 +435,19 @@ const IR::Type* TypeInference::canonicalize(const IR::Type* type) {
             return new IR::P4Control(cont->srcInfo, cont->name,
                                      ctype, pl, cont->controlLocals, cont->body);
         return type;
+    } else if (type->is<IR::P4PackageModel>()) {
+        auto cont = type->to<IR::P4PackageModel>();
+        auto ctype0 = getTypeType(cont->type);
+        if (ctype0 == nullptr)
+            return nullptr;
+        auto ctype = ctype0->to<IR::Type_Control>();
+        auto pl = canonicalizeParameters(cont->constructorParams);
+        if (pl == nullptr)
+            return nullptr;
+        if (ctype != cont->type || pl != cont->constructorParams)
+            return new IR::P4PackageModel(cont->srcInfo, cont->name,
+                                     ctype, pl, cont->controlLocals, cont->body);
+        return type;
     } else if (type->is<IR::P4Parser>()) {
         auto p = type->to<IR::P4Parser>();
         auto ctype0 = getTypeType(p->type);
@@ -644,9 +657,11 @@ const IR::Node* TypeInference::postorder(IR::Declaration_Variable* decl) {
         type = type->to<IR::Type_SpecializedCanonical>()->baseType;
 
     if (type->is<IR::IContainer>() || type->is<IR::Type_Extern>()) {
-        typeError("%1%: cannot declare variables of type %2% (consider using an instantiation)",
-                  decl, type);
-        return decl;
+        if (!findContext<IR::P4PackageModel>()) {
+            typeError("%1%: cannot declare variables of type %2% (consider using an instantiation)",
+                      decl, type);
+            return decl;
+        }
     }
 
     auto orig = getOriginal<IR::Declaration_Variable>();
@@ -947,14 +962,26 @@ const IR::Node* TypeInference::preorder(IR::Declaration_Instance* decl) {
             prune();
             return decl;
         }
-        if (!simpleType->is<IR::Type_Package>() && (findContext<IR::IContainer>() == nullptr)) {
-            ::error("%1%: cannot instantiate at top-level", decl);
-            return decl;
+        if (!simpleType->is<IR::Type_Package>() && (findContext<IR::IContainer>() == nullptr &&
+                                                   findContext<IR::Function>() == nullptr)) {
+            if (!simpleType->is<IR::P4PackageModel>()) {
+                ::error("%1%: cannot instantiate at top-level", decl);
+                return decl;
+            }
         }
         auto typeAndArgs = containerInstantiation(
             decl, decl->arguments, simpleType->to<IR::IContainer>());
         auto type = typeAndArgs.first;
         auto args = typeAndArgs.second;
+        if (type->is<IR::IApply>()) {
+            auto app = type->to<IR::IApply>();
+            for (auto pt : *app->getApplyParameters()) {
+                // pt->type is surely canonical =>
+                // can set pt to pt->type just to have
+                // it in the typeMap
+                typeMap->setType(pt, pt->type);
+            }
+        }
         if (type == nullptr || args == nullptr) {
             prune();
             return decl;
@@ -1088,7 +1115,10 @@ const IR::Node* TypeInference::postorder(IR::P4Control* cont) {
     (void)setTypeType(cont, false);
     return cont;
 }
-
+const IR::Node* TypeInference::postorder(IR::P4PackageModel* cont) {
+    (void)setTypeType(cont, false);
+    return cont;
+}
 const IR::Node* TypeInference::postorder(IR::P4Parser* parser) {
     (void)setTypeType(parser, false);
     return parser;
@@ -1323,7 +1353,8 @@ const IR::Node* TypeInference::postorder(IR::Type_Stack* type) {
     if (etype == nullptr)
         return type;
 
-    if (!etype->is<IR::Type_Header>() && !etype->is<IR::Type_HeaderUnion>())
+    if (!etype->is<IR::Type_Header>() && !etype->is<IR::Type_HeaderUnion>() &&
+      !(etype->is<IR::Type_Struct>() && etype->to<IR::Type_Struct>()->getAnnotation("hdr") != nullptr))
         typeError("Header stack %1% used with non-header type %2%",
                   type, etype->toString());
     return type;
@@ -2988,7 +3019,7 @@ const IR::Node* TypeInference::postorder(IR::MethodCallExpression* expression) {
 
         // We build a type for the callExpression and unify it with the method expression
         // Allocate a fresh variable for the return type; it will be hopefully bound in the process.
-        auto rettype = new IR::Type_Var(IR::ID(refMap->newName("R"), nullptr));
+        auto rettype = new IR::Type_Var(IR::ID(/*refMap->newName("R")*/"__ret__", nullptr));
         auto args = new IR::Vector<IR::ArgumentInfo>();
         bool constArgs = true;
         for (auto aarg : *expression->arguments) {

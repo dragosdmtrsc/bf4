@@ -319,7 +319,16 @@ class ControlInstantiation : public Instantiation {
         substitute(); }
     const IR::P4Control* control;
 };
-
+class PackageModelInstantiation : public Instantiation {
+public:
+  PackageModelInstantiation(const IR::Declaration_Instance* instance,
+                       const IR::Vector<IR::Type>* typeArguments,
+                       const IR::P4PackageModel* control) :
+    Instantiation(instance, typeArguments), control(control) {
+    constructorParameters = control->getConstructorParameters();
+    substitute(); }
+  const IR::P4PackageModel* control;
+};
 }  // namespace P4
 
 #endif /* _FRONTENDS_P4_METHODINSTANCE_H_ */

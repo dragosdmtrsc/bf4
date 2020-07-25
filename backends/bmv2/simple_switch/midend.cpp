@@ -56,10 +56,12 @@ limitations under the License.
 #include "midend/midEndLast.h"
 #include "midend/fillEnumMap.h"
 #include "midend/removeAssertAssume.h"
+#include "PSAConverter.h"
 
 namespace BMV2 {
 
-SimpleSwitchMidEnd::SimpleSwitchMidEnd(CompilerOptions& options) : MidEnd(options) {
+SimpleSwitchMidEnd::SimpleSwitchMidEnd(CompilerOptions& options,
+                       std::function<bool(const Visitor::Context *, const IR::Expression *)> policy) : MidEnd(options) {
     auto evaluator = new P4::EvaluatorPass(&refMap, &typeMap);
     if (BMV2::BMV2Context::get().options().loadIRFromJson == false) {
         auto convertEnums = new P4::ConvertEnums(&refMap, &typeMap, new EnumOn32Bits("v1model.p4"));
@@ -73,6 +75,7 @@ SimpleSwitchMidEnd::SimpleSwitchMidEnd(CompilerOptions& options) : MidEnd(option
             new VisitFunctor([this, convertEnums]() { enumMap = convertEnums->getEnumMapping(); }),
             new P4::OrderArguments(&refMap, &typeMap),
             new P4::TypeChecking(&refMap, &typeMap),
+            new RescueClone(&refMap, &typeMap),
             new P4::SimplifyKey(&refMap, &typeMap,
                                 new P4::OrPolicy(
                                     new P4::IsValid(&refMap, &typeMap),
@@ -95,7 +98,7 @@ SimpleSwitchMidEnd::SimpleSwitchMidEnd(CompilerOptions& options) : MidEnd(option
             new P4::Predication(&refMap),
             new P4::MoveDeclarations(),  // more may have been introduced
             new P4::ConstantFolding(&refMap, &typeMap),
-            new P4::LocalCopyPropagation(&refMap, &typeMap),
+            new P4::LocalCopyPropagation(&refMap, &typeMap, nullptr, policy),
             new P4::ConstantFolding(&refMap, &typeMap),
             new P4::SimplifyKey(&refMap, &typeMap,
                                 new P4::OrPolicy(
@@ -132,5 +135,4 @@ SimpleSwitchMidEnd::SimpleSwitchMidEnd(CompilerOptions& options) : MidEnd(option
         });
     }
 }
-
 }  // namespace BMV2

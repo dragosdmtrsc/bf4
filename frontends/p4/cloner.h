@@ -30,6 +30,8 @@ class ClonePathExpressions : public Transform {
     { visitDagOnce = false; setName("ClonePathExpressions"); }
     const IR::Node* postorder(IR::PathExpression* path) override
     { return new IR::PathExpression(path->path->clone()); }
+    const IR::Node* postorder(IR::Type_Name *t) override
+    { return new IR::Type_Name(t->path->clone()); }
 
     template<typename T>
     const T* clone(const IR::Node* node)

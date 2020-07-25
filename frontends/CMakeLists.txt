@@ -248,6 +248,7 @@ set (FRONTEND_CPPLINT_FILES
 add_cpplint_files (${CMAKE_CURRENT_SOURCE_DIR} "${FRONTEND_CPPLINT_FILES}")
 
 build_unified(FRONTEND_SOURCES)
+message("frontend extensions : ${EXTENSION_FRONTEND_SOURCES}")
 build_unified(EXTENSION_FRONTEND_SOURCES)
 if (FLEX_INCLUDE_DIRS)
   include_directories(${FLEX_INCLUDE_DIRS})

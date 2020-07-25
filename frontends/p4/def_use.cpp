@@ -330,10 +330,10 @@ void Definitions::removeLocation(const StorageLocation* location) {
     }
 }
 
-const ProgramPoints* Definitions::getPoints(const LocationSet* locations) const {
+const ProgramPoints* Definitions::getPoints(const LocationSet* locations, bool emptyIfNone) const {
     const ProgramPoints* result = new ProgramPoints();
     for (auto sl : *locations->canonicalize()) {
-        auto points = getPoints(sl->to<BaseLocation>());
+        auto points = getPoints(sl->to<BaseLocation>(), emptyIfNone);
         result = result->merge(points);
     }
     return result;
@@ -362,6 +362,49 @@ bool Definitions::operator==(const Definitions& other) const {
     return true;
 }
 
+Definitions *Definitions::diff(const Definitions* other) const {
+    auto result = new Definitions();
+    for (auto d : definitions) {
+        auto loc = d.first;
+        auto defs = d.second;
+        ProgramPoints projectedDefs;
+        for (auto pp : *defs) {
+            projectedDefs.add(ProgramPoint(pp.last()));
+        }
+        auto current = ::get(other->definitions, loc);
+        if (current != nullptr) {
+            ProgramPoints projectedCrt;
+            for (auto pp : *current) {
+                projectedCrt.add(ProgramPoint(pp.last()));
+            }
+            if (!(projectedCrt == projectedDefs)) {
+                ProgramPoints *delta = new ProgramPoints;
+                for (auto &c : projectedCrt) {
+                    if (!defs->contains(c)) {
+                        delta->add(c);
+                    }
+                }
+                result->definitions.emplace(loc, delta);
+            }
+        } else {
+            result->definitions.emplace(loc, defs);
+        }
+    }
+    return result;
+}
+
+const ProgramPoints *Definitions::getPoints(const BaseLocation *location, bool emptyIfNone) const {
+  auto r = ::get(definitions, location);
+  if (!r && !emptyIfNone)
+    BUG("%1%: no definitions", location);
+  else {
+    if (!r)
+        return const_cast<Definitions &>(*this).
+          definitions.
+          emplace(location, new ProgramPoints(ProgramPoint::beforeStart)).first->second;
+    else return r;
+  } }
+
 //////////////////////////////////////////////////////////////////////////////////////////////
 // ComputeWriteSet implementation
 
@@ -387,9 +430,18 @@ void ComputeWriteSet::enterScope(const IR::ParameterList* parameters,
                 continue;
             if (p->direction == IR::Direction::In ||
                 p->direction == IR::Direction::InOut ||
-                p->direction == IR::Direction::None)
+                p->direction == IR::Direction::None) {
+//                LocationSet locationSet;
+//                locationSet.addCanonical(loc);
+//                bool has_locationset = true;
+//                for (auto sl : locationSet) {
+//                    if (!defs->hasLocation(sl->to<BaseLocation>())) {
+//                        has_locationset = false;
+//                        break;
+//                    }
+//                }
                 defs->setDefinition(loc, startPoints);
-            else if (p->direction == IR::Direction::Out)
+            } else if (p->direction == IR::Direction::Out)
                 defs->setDefinition(loc, uninit);
             auto valid = loc->getValidBits();
             defs->setDefinition(valid, startPoints);
@@ -450,7 +502,7 @@ Definitions* ComputeWriteSet::getDefinitionsAfter(const IR::ParserState* state) 
 // if node is nullptr, use getOriginal().
 ProgramPoint ComputeWriteSet::getProgramPoint(const IR::Node* node) const {
     if (node == nullptr) {
-        node = getOriginal<IR::Statement>();
+        node = getOriginal<IR::StatOrDecl>();
         CHECK_NULL(node);
     }
     return ProgramPoint(callingContext, node);
@@ -656,27 +708,19 @@ bool ComputeWriteSet::preorder(const IR::MethodCallExpression* expression) {
     }
 
     // Symbolically call some apply methods (actions and tables)
-    std::vector<const IR::IDeclaration *> callee;
-    if (mi->is<ActionCall>()) {
-        auto action = mi->to<ActionCall>()->action;
-        callee.push_back(action);
-    } else if (mi->isApply()) {
-        auto am = mi->to<ApplyMethod>();
-        if (am->isTableApply()) {
-            auto table = am->object->to<IR::P4Table>();
-            callee.push_back(table);
-        }
-    } else if (auto em = mi->to<ExternMethod>()) {
-        // symbolically call all the methods that might be called via this extern method
-        callee = em->mayCall(); }
+    auto callee = callees(mi);
     if (!callee.empty()) {
-        LOG3("Analyzing " << DBPrint::Brief << callee << DBPrint::Reset);
+        LOG3("Analyzing " << DBPrint::Brief << DBPrint::Reset);
         ProgramPoint pt(callingContext, expression);
-        ComputeWriteSet cw(this, pt, currentDefinitions);
-        for (auto c : callee)
-            (void)c->getNode()->apply(cw);
-        currentDefinitions = cw.currentDefinitions;
-        exitDefinitions = exitDefinitions->joinDefinitions(cw.exitDefinitions);
+        auto cw = clone(pt);
+        for (auto c : callee) {
+            Definitions *defs = c.second;
+            if (defs)
+                cw->currentDefinitions = defs;
+            (void)c.first->getNode()->apply(*cw);
+            currentDefinitions = mergeDefinitions(currentDefinitions, cw->currentDefinitions, c.first);
+        }
+        exitDefinitions = exitDefinitions->joinDefinitions(cw->exitDefinitions);
         LOG3("Definitions after call of " << DBPrint::Brief << expression << ": " <<
              currentDefinitions << DBPrint::Reset);
     }
@@ -697,6 +741,30 @@ bool ComputeWriteSet::preorder(const IR::MethodCallExpression* expression) {
     }
     expressionWrites(expression, result);
     return false;
+}
+
+std::vector<std::pair<const IR::IDeclaration *, P4::Definitions *>>
+ComputeWriteSet::callees(const MethodInstance *mi) const {
+  std::vector<std::pair<const IR::IDeclaration *, P4::Definitions *>>
+      callee;
+  if (mi->is<ActionCall>()) {
+    auto action = mi->to<ActionCall>()->action;
+    callee.emplace_back(action, nullptr);
+  } else if (mi->isApply()) {
+    auto am = mi->to<ApplyMethod>();
+    if (am->isTableApply()) {
+      auto table = am->object->to<IR::P4Table>();
+      callee.emplace_back(table, nullptr);
+    }
+  } else if (auto em = mi->to<ExternMethod>()) {
+    // symbolically call all the methods that might be called via this extern
+    // method
+    auto mayCall = em->mayCall();
+    for (const IR::IDeclaration *dec : mayCall) {
+      callee.emplace_back(dec, nullptr);
+    }
+  }
+  return callee;
 }
 
 //////////////////////////
@@ -729,8 +797,8 @@ bool ComputeWriteSet::preorder(const IR::P4Parser* parser) {
         // but we use the same data structures
         ProgramPoint pt(state);
         currentDefinitions = allDefinitions->getDefinitions(pt);
-        ComputeWriteSet cws(this, pt, currentDefinitions);
-        (void)state->apply(cws);
+        auto cws = clone(pt);
+        (void)state->apply(*cws);
 
         ProgramPoint sp(state);
         auto after = getDefinitionsAfter(state);
@@ -932,6 +1000,11 @@ bool ComputeWriteSet::preorder(const IR::MethodCallStatement* statement) {
     auto locs = getWrites(statement->methodCall);
     auto defs = currentDefinitions->writes(getProgramPoint(), locs);
     return setDefinitions(defs);
+}
+
+Definitions *
+ComputeWriteSet::mergeDefinitions(const Definitions *, const Definitions *after, const IR::IDeclaration *) {
+    return after->cloneDefinitions();
 }
 
 }  // namespace P4

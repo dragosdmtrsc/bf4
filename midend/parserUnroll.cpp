@@ -50,6 +50,7 @@ class ParserSymbolicInterpreter {
     SymbolicValueFactory* factory;
     ParserInfo*         synthesizedParser;  // output produced
     bool                unroll;
+    bool verbose;
 
     ValueMap* initializeVariables() {
         ValueMap* result = new ValueMap();
@@ -88,12 +89,24 @@ class ParserSymbolicInterpreter {
 
     ParserStateInfo* newStateInfo(const ParserStateInfo* predecessor,
                                   cstring stateName, ValueMap* values) {
-        if (stateName == IR::ParserState::accept ||
-            stateName == IR::ParserState::reject)
+        if (stateName == IR::ParserState::reject)
             return nullptr;
+
         auto state = structure->get(stateName);
+        if (stateName == IR::ParserState::accept) {
+            auto currentAccept = synthesizedParser->get(stateName);
+            if (!currentAccept || currentAccept->empty()) {
+                auto pi = new ParserStateInfo(stateName, parser, state, predecessor, values->clone());
+                synthesizedParser->add(pi);
+            } else {
+                auto lastPi = currentAccept->back();
+                lastPi->before->merge(values);
+            }
+            return nullptr;
+        }
         auto pi = new ParserStateInfo(stateName, parser, state, predecessor, values->clone());
-        synthesizedParser->add(pi);
+        if (verbose)
+            synthesizedParser->add(pi);
         return pi;
     }
 
@@ -170,7 +183,7 @@ class ParserSymbolicInterpreter {
         } else {
             BUG("%1%: unexpected declaration or statement", sord);
         }
-        LOG2("After " << sord << " state is\n" << valueMap);
+//        LOG2("After " << sord << " state is\n" << valueMap);
         return success;
     }
 
@@ -262,7 +275,7 @@ class ParserSymbolicInterpreter {
                 auto prevPackets = crt->before->filter(filter);
                 if (packets->equals(prevPackets)) {
                     bool conservative = false;
-                    for (auto p : state->before->map) {
+                    for (auto p : packets->map) {
                         auto pkt = p.second->to<SymbolicPacketIn>();
                         if (pkt->isConservative()) {
                             conservative = true;
@@ -308,9 +321,9 @@ class ParserSymbolicInterpreter {
 
  public:
     ParserSymbolicInterpreter(ParserStructure* structure, ReferenceMap* refMap,
-                              TypeMap* typeMap, bool unroll)
+                              TypeMap* typeMap, bool unroll, bool verbose = true)
             : structure(structure), refMap(refMap), typeMap(typeMap),
-              synthesizedParser(nullptr), unroll(unroll) {
+              synthesizedParser(nullptr), unroll(unroll), verbose(verbose) {
         CHECK_NULL(structure); CHECK_NULL(refMap); CHECK_NULL(typeMap);
         factory = new SymbolicValueFactory(typeMap);
         parser = structure->parser;
@@ -329,27 +342,66 @@ class ParserSymbolicInterpreter {
         while (!toRun.empty()) {
             auto stateInfo = toRun.back();
             toRun.pop_back();
-            LOG1("Symbolic evaluation of " << stateChain(stateInfo));
             bool infLoop = checkLoops(stateInfo);
             if (infLoop)
                 // don't evaluate successors anymore
                 continue;
             auto nextStates = evaluateState(stateInfo);
             if (nextStates == nullptr) {
-                LOG1("No next states");
                 continue;
             }
             toRun.insert(toRun.end(), nextStates->begin(), nextStates->end());
         }
-
         return synthesizedParser;
     }
 };
 }  // namespace ParserStructureImpl
 
-void ParserStructure::analyze(ReferenceMap* refMap, TypeMap* typeMap, bool unroll) {
-    ParserStructureImpl::ParserSymbolicInterpreter psi(this, refMap, typeMap, unroll);
+void ParserStructure::analyze(ReferenceMap* refMap, TypeMap* typeMap, bool unroll, bool verbose) {
+    ParserStructureImpl::ParserSymbolicInterpreter psi(this, refMap, typeMap, unroll, verbose);
     result = psi.run();
 }
 
+const IR::Node *ParserUnroller::postorder(IR::P4Parser *parser) {
+    LOG1("Parser unrolled " << parser->externalName());
+
+    for (const auto st : this->parser->parser->states) {
+        const auto stateTrans = this->parser->result->get(st->name.name);
+        if (stateTrans) {
+            for (const ParserStateInfo *st2 : *stateTrans) {
+                std::stringstream sstream;
+                auto crt = st2->predecessor;
+                while (crt) {
+                    sstream << "," << crt->name;
+                    crt = crt->predecessor;
+                }
+                LOG1("reachable from " << st->externalName() << " " << sstream.str());
+            }
+        } else {
+            LOG1("state trans is null for " << this->parser->start->name.originalName);
+        }
+    }
+    return parser;
+}
+
+const IR::Node * SlashParser::postorder(IR::PathExpression *pathExpression) {
+    auto state = findContext<IR::ParserState>();
+    if (state == nullptr)
+        return pathExpression;
+    auto decl = refMap->getDeclaration(pathExpression->path);
+    if (decl != nullptr && decl->is<IR::ParserState>()) {
+        LOG1("analyzing pathExpression case " << pathExpression);
+        auto theState = decl->to<IR::ParserState>();
+        CHECK_NULL(theState);
+        auto parser = findContext<IR::P4Parser>();
+        CHECK_NULL(parser);
+        if (!spec->contains(parser, state, theState)) {
+            LOG1("slashed out path expression " << pathExpression);
+            auto rejState = parser->getDeclByName(IR::ParserState::reject)->to<IR::ParserState>();
+            IR::PathExpression *pe = new IR::PathExpression(rejState->getName());
+            return pe;
+        }
+    }
+    return pathExpression;
+}
 }  // namespace P4

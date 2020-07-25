@@ -254,6 +254,28 @@ const IR::Node* DoConstantFolding::postorder(IR::BOr* e) {
 }
 
 const IR::Node* DoConstantFolding::postorder(IR::Equ* e) {
+    if (typesKnown) {
+        auto ltype = typeMap->getType(e->left);
+        if (ltype->is<IR::Type_Boolean>()) {
+            auto left = getConstant(e->left);
+            auto right = getConstant(e->right);
+            auto lefte = e->left;
+            auto righte = e->right;
+            if (!left && !right) return e;
+            if (left && right) return compare(e);
+            if (!left && right) {
+                std::swap(left, right);
+                std::swap(lefte, righte);
+            }
+            if (left->is<IR::BoolLiteral>()) {
+                if (!left->to<IR::BoolLiteral>()->value) {
+                    return new IR::LNot(righte);
+                } else {
+                    return righte;
+                }
+            }
+        }
+    }
     return compare(e);
 }
 
@@ -465,8 +487,15 @@ DoConstantFolding::binary(const IR::Operation_Binary* e,
 
 const IR::Node* DoConstantFolding::postorder(IR::LAnd* e) {
     auto left = getConstant(e->left);
-    if (left == nullptr)
+    auto right = getConstant(e->right);
+    auto lefte = e->left;
+    auto righte = e->right;
+    if (left == nullptr && right == nullptr)
         return e;
+    if (!left && right) {
+        std::swap(left, right);
+        std::swap(lefte, righte);
+    }
 
     auto lcst = left->to<IR::BoolLiteral>();
     if (lcst == nullptr) {
@@ -474,15 +503,22 @@ const IR::Node* DoConstantFolding::postorder(IR::LAnd* e) {
         return e;
     }
     if (lcst->value) {
-        return e->right;
+        return righte;
     }
     return new IR::BoolLiteral(left->srcInfo, false);
 }
 
 const IR::Node* DoConstantFolding::postorder(IR::LOr* e) {
     auto left = getConstant(e->left);
-    if (left == nullptr)
+    auto right = getConstant(e->right);
+    auto lefte = e->left;
+    auto righte = e->right;
+    if (left == nullptr && right == nullptr)
         return e;
+    if (!left && right) {
+        std::swap(left, right);
+        std::swap(lefte, righte);
+    }
 
     auto lcst = left->to<IR::BoolLiteral>();
     if (lcst == nullptr) {
@@ -490,7 +526,7 @@ const IR::Node* DoConstantFolding::postorder(IR::LOr* e) {
         return e;
     }
     if (!lcst->value) {
-        return e->right;
+        return righte;
     }
     return new IR::BoolLiteral(left->srcInfo, true);
 }

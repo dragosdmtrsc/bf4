@@ -27,7 +27,7 @@ set (BMV2_SIMPLE_SWITCH_SRCS
     simple_switch/midend.h
     simple_switch/simpleSwitch.cpp
     simple_switch/simpleSwitch.h
-    )
+        simple_switch/PSAConverter.cpp simple_switch/PSAConverter.h)
 add_cpplint_files (${CMAKE_CURRENT_SOURCE_DIR} "${BMV2_SIMPLE_SWITCH_SRCS}")
 
 set (BMV2_PSA_SWITCH_SRCS
@@ -87,6 +87,9 @@ add_library(bmv2backend ${BMV2_BACKEND_COMMON_SRCS})
 add_dependencies(bmv2backend genIR frontend)
 
 build_unified(BMV2_SIMPLE_SWiTCH_SRCS)
+
+add_library(bm2ss ${BMV2_BACKEND_COMMON_SRCS} ${BMV2_SIMPLE_SWITCH_SRCS})
+
 add_executable(p4c-bm2-ss ${BMV2_SIMPLE_SWITCH_SRCS})
 target_link_libraries (p4c-bm2-ss bmv2backend ${P4C_LIBRARIES} ${P4C_LIB_DEPS})
 

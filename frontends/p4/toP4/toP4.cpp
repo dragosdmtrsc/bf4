@@ -164,6 +164,8 @@ bool ToP4::preorder(const IR::P4Program* program) {
              * we ignore mainFile and don't emit #includes for any non-system header */
 
             if (includesEmitted.find(sourceFile) == includesEmitted.end()) {
+                if (!first)
+                    builder.newline();
                 builder.append("#include ");
                 if (sourceFile.startsWith(p4includePath)) {
                     const char *p = sourceFile.c_str() + strlen(p4includePath);
@@ -537,7 +539,10 @@ bool ToP4::preorder(const IR::Type_Control* t) {
     dump(2);
     builder.emitIndent();
     visit(t->annotations);
-    builder.append("control ");
+    if (withinPackageModel)
+      builder.append("package_model ");
+    else
+      builder.append("control ");
     builder.append(t->name);
     visit(t->typeParameters);
     visit(t->applyParams);
@@ -1051,25 +1056,35 @@ bool ToP4::preorder(const IR::IfStatement* s) {
     visit(s->condition);
     builder.append(") ");
     if (!s->ifTrue->is<IR::BlockStatement>()) {
+        builder.append(" {");
         builder.increaseIndent();
         builder.newline();
         builder.emitIndent();
     }
     visit(s->ifTrue);
-    if (!s->ifTrue->is<IR::BlockStatement>())
+    if (!s->ifTrue->is<IR::BlockStatement>()) {
+        builder.newline();
         builder.decreaseIndent();
+        builder.emitIndent();
+        builder.append("} ");
+    }
     if (s->ifFalse != nullptr) {
         builder.newline();
         builder.emitIndent();
         builder.append("else ");
         if (!s->ifFalse->is<IR::BlockStatement>()) {
+            builder.append(" {");
             builder.increaseIndent();
             builder.newline();
             builder.emitIndent();
         }
         visit(s->ifFalse);
-        if (!s->ifFalse->is<IR::BlockStatement>())
+        if (!s->ifFalse->is<IR::BlockStatement>()) {
+            builder.newline();
             builder.decreaseIndent();
+            builder.emitIndent();
+            builder.append("}");
+        }
     }
     return false;
 }
@@ -1406,4 +1421,30 @@ bool ToP4::preorder(const IR::Path* p) {
     builder.append(p->asString());
     return false;
 }
+
+  bool ToP4::preorder(const IR::P4PackageModel *c) {
+      dump(1);
+      bool decl = isDeclaration;
+      isDeclaration = false;
+      withinPackageModel = true;
+      visit(c->type);
+      withinPackageModel = false;
+      isDeclaration = decl;
+      if (c->constructorParams->size() != 0)
+          visit(c->constructorParams);
+      builder.spc();
+      builder.blockStart();
+      for (auto s : c->controlLocals) {
+          builder.emitIndent();
+          visit(s);
+          builder.newline();
+      }
+
+      builder.emitIndent();
+      builder.append("apply ");
+      visit(c->body);
+      builder.newline();
+      builder.blockEnd(true);
+      return false;
+  }
 }  // namespace P4

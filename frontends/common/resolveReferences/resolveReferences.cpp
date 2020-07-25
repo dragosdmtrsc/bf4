@@ -19,6 +19,99 @@ limitations under the License.
 
 namespace P4 {
 
+
+/// Helper class to indicate types of nodes that may be returned during resolution.
+enum class ResolutionType {
+    Any,
+    Type,
+    TypeVariable
+};
+
+/// Data structure representing a stack of nested namespaces.
+class ResolutionContext : public IHasDbPrint {
+    /// Stack of nested namespaces
+    std::vector<const IR::INamespace*> stack;
+    /// Root namespace for the program.
+    const IR::INamespace* rootNamespace;
+    /// Stack of namespaces for global declarations (e.g., match_kind)
+    std::vector<const IR::INamespace*> globals;
+    // Note that all errors have been merged by the parser into
+    // a single error { } namespace.
+
+    std::vector<const IR::Vector<IR::Argument>*> argumentStack;
+
+    // index: INamespace -> ID -> std::vector<IDeclaration>
+    std::unordered_map<const IR::IGeneralNamespace *,
+      std::unordered_map<cstring, std::vector<const IR::IDeclaration *>>> declIndex;
+
+ public:
+    explicit ResolutionContext(const IR::INamespace* rootNamespace) :
+            rootNamespace(rootNamespace)
+    { push(rootNamespace); }
+
+    void dbprint(std::ostream& out) const;
+    void createIndex(const IR::INamespace *element) {
+        if (auto gns = element->to<IR::IGeneralNamespace>()) {
+            for (auto d : *gns->getDeclarations()) {
+                declIndex[gns][d->getName().name].push_back(d);
+            }
+         }
+    }
+    /// Add name space @p e to `globals`.
+    void addGlobal(const IR::INamespace* e) {
+        globals.push_back(e);
+        createIndex(e);
+    }
+
+    /// We are resolving a method call.  Remember the arguments.
+    void enterMethodCall(const IR::Vector<IR::Argument>* args) {
+        argumentStack.push_back(args);
+    }
+
+    /// We are done resolving a method call.
+    void exitMethodCall() {
+        argumentStack.pop_back();
+    }
+
+    /// Add name space @p element to `stack`.
+    void push(const IR::INamespace* element) {
+        CHECK_NULL(element);
+        stack.push_back(element);
+        createIndex(element);
+    }
+
+    /// Remove namespace @p element from `stack`
+    /// @pre: `stack` must not be empty and `element` must be back element
+    /// @post: first occurrence of `element` is removed from stack
+    void pop(const IR::INamespace* element) {
+        if (stack.empty())
+            BUG("Empty stack in ResolutionContext::pop");
+        const IR::INamespace* node = stack.back();
+        if (node != element)
+            BUG("Expected %1% on stack, found %2%", element, node);
+        stack.pop_back();
+    }
+    void done();
+
+    /// Resolve references for @p name, restricted to @p type declarations.
+    /// If @p forwardOK is `false`, the referenced location must precede the location of @p name.
+    std::vector<const IR::IDeclaration*>*
+    resolve(IR::ID name, ResolutionType type, bool forwardOK) const;
+
+    /// Resolve references for @p name, restricted to @p type declarations.
+    /// If @p forwardOK is `false`, the referenced location must precede the location of @p name.
+    std::vector<const IR::IDeclaration*>
+    resolveOpt(IR::ID name, ResolutionType type, bool forwardOK) const;
+
+    /// Resolve reference for @p name, restricted to @p type declarations, and expect one result.
+    /// If @p forwardOK is `false`, the referenced location must precede the location of @p name.
+    const IR::IDeclaration*
+    resolveUnique(IR::ID name, ResolutionType type, bool forwardOK) const;
+
+    // Resolve a refrence to a type @p type.
+    const IR::Type *resolveType(const IR::Type *type) const;
+};
+
 std::vector<const IR::IDeclaration*>*
 ResolutionContext::resolve(IR::ID name, P4::ResolutionType type, bool forwardOK) const {
     static std::vector<const IR::IDeclaration*> empty;
@@ -66,7 +159,6 @@ ResolutionContext::resolve(IR::ID name, P4::ResolutionType type, bool forwardOK)
                 };
                 decls = decls->where(locationFilter);
             }
-
             auto vector = decls->toVector();
             if (!vector->empty()) {
                 LOG3("Resolved in " << dbp(current->getNode()));
@@ -124,28 +216,29 @@ const IR::IDeclaration*
 ResolutionContext::resolveUnique(IR::ID name,
                                  P4::ResolutionType type,
                                  bool forwardOK) const {
-    const std::vector<const IR::IDeclaration*> *decls = resolve(name, type, forwardOK);
+    auto decls = resolveOpt(name, type, forwardOK);
     // Check overloaded symbols.
-    if (!argumentStack.empty() && decls->size() > 1) {
+    if (!argumentStack.empty() && decls.size() > 1) {
         auto arguments = argumentStack.back();
-        decls = Util::Enumerator<const IR::IDeclaration*>::createEnumerator(*decls)->
-                where([arguments](const IR::IDeclaration* d) {
-                        auto func = d->to<IR::IFunctional>();
-                        if (func == nullptr)
-                            return true;
-                        return func->callMatches(arguments); })->
-                toVector();
+        auto Iend = std::remove_if(decls.begin(),
+                                   decls.end(), [&](const IR::IDeclaration *d) {
+          auto func = d->to<IR::IFunctional>();
+          if (func == nullptr)
+              return false;
+          return !func->callMatches(arguments);
+        });
+        decls.resize(static_cast<unsigned long>(Iend - decls.begin()));
     }
 
-    if (decls->empty()) {
+    if (decls.empty()) {
         ::error(ErrorType::ERR_NOT_FOUND, "declaration", name);
         return nullptr;
     }
-    if (decls->size() == 1)
-        return decls->at(0);
+    if (decls.size() == 1)
+        return decls[0];
 
     ::error(ErrorType::ERR_INVALID, "multiple matching declarations", name);
-    for (auto a : *decls)
+    for (auto a : decls)
         ::error("Candidate: %1%", a);
     return nullptr;
 }
@@ -175,6 +268,110 @@ void ResolutionContext::dbprint(std::ostream& out) const {
         out << std::endl;
     }
     out << "----------" << std::endl;
+}
+
+std::vector<const IR::IDeclaration*>
+ResolutionContext::resolveOpt(IR::ID name, ResolutionType type, bool forwardOK) const {
+    std::vector<const IR::IDeclaration *> retval;
+    std::vector<const IR::INamespace*> toTry(stack);
+    toTry.insert(toTry.end(), globals.begin(), globals.end());
+
+    for (auto it = toTry.rbegin(); it != toTry.rend(); ++it) {
+        const IR::INamespace* current = *it;
+        LOG3("Trying to resolve in " << current->toString());
+
+        if (current->is<IR::IGeneralNamespace>()) {
+            auto gen = current->to<IR::IGeneralNamespace>();
+            auto Idecls = declIndex.find(gen);
+            BUG_CHECK(Idecls != declIndex.end(), "%1% not found in index", gen);
+            auto &decs = Idecls->second;
+            const std::vector<const IR::IDeclaration *> *decls = nullptr;
+            {
+                auto Iname = decs.find(name);
+                if (Iname != decs.end()) {
+                    decls = &Iname->second;
+                }
+            }
+            if (!decls || decls->empty()) continue;
+            switch (type) {
+                case P4::ResolutionType::Any:
+                    retval = *decls;
+                    break;
+                case P4::ResolutionType::Type: {
+                    std::function<bool(const IR::IDeclaration*)> kindFilter =
+                      [](const IR::IDeclaration* d) {
+                        return d->is<IR::Type>();
+                      };
+                    std::copy_if(decls->begin(), decls->end(),
+                                 std::back_inserter(retval), kindFilter);
+                    break;
+                }
+                case P4::ResolutionType::TypeVariable: {
+                    std::function<bool(const IR::IDeclaration*)> kindFilter =
+                      [](const IR::IDeclaration* d) {
+                        return d->is<IR::Type_Var>(); };
+                    std::copy_if(decls->begin(), decls->end(),
+                                 std::back_inserter(retval), kindFilter);
+                    break;
+                }
+                default:
+                    BUG("Unexpected enumeration value %1%", static_cast<int>(type));
+            }
+            if (retval.empty()) continue;
+            if (!forwardOK && name.srcInfo.isValid()) {
+                std::function<bool(const IR::IDeclaration*)> locationFilter =
+                  [name](const IR::IDeclaration* d) {
+                    Util::SourceInfo nsi = name.srcInfo;
+                    Util::SourceInfo dsi = d->getNode()->srcInfo;
+                    bool before = dsi <= nsi;
+                    LOG3("\tPosition test:" << dsi << "<=" << nsi << "=" << before);
+                    return !before;
+                  };
+                auto Iend = std::remove_if(retval.begin(), retval.end(), locationFilter);
+                retval.resize(static_cast<unsigned long>(Iend - retval.begin()));
+            }
+            if (!retval.empty()) {
+                LOG3("Resolved in " << dbp(current->getNode()));
+                return retval;
+            } else {
+                continue;
+            }
+        } else {
+            auto simple = current->to<IR::ISimpleNamespace>();
+            auto decl = simple->getDeclByName(name);
+            if (decl == nullptr)
+                continue;
+            switch (type) {
+                case P4::ResolutionType::Any:
+                    break;
+                case P4::ResolutionType::Type: {
+                    if (!decl->is<IR::Type>())
+                        continue;
+                    break;
+                }
+                case P4::ResolutionType::TypeVariable: {
+                    if (!decl->is<IR::Type_Var>())
+                        continue;
+                    break;
+                }
+                default:
+                    BUG("Unexpected enumeration value %1%", static_cast<int>(type));
+            }
+
+            if (!forwardOK && name.srcInfo.isValid()) {
+                Util::SourceInfo nsi = name.srcInfo;
+                Util::SourceInfo dsi = decl->getNode()->srcInfo;
+                bool before = dsi <= nsi;
+                LOG3("\tPosition test:" << dsi << "<=" << nsi << "=" << before);
+                if (!before)
+                    continue;
+            }
+
+            LOG3("Resolved in " << dbp(current->getNode()));
+            return {decl};
+        }
+    }
+    return retval;
 }
 
 ResolveReferences::ResolveReferences(ReferenceMap* refMap,
@@ -233,10 +430,10 @@ void ResolveReferences::checkShadowing(const IR::INamespace* ns) const {
         if (node->is<IR::StructField>())
             continue;
 
-        auto prev = context->resolve(decl->getName(), ResolutionType::Any, anyOrder);
-        if (prev->empty()) continue;
+        auto prev = context->resolveOpt(decl->getName(), ResolutionType::Any, anyOrder);
+        if (prev.empty()) continue;
 
-        for (auto p : *prev) {
+        for (auto p : prev) {
             const IR::Node* pnode = p->getNode();
             if (pnode == node) continue;
             if ((pnode->is<IR::Method>() || pnode->is<IR::Type_Extern>() ||
@@ -331,6 +528,22 @@ void ResolveReferences::postorder(const IR::P4Control *c) {
     removeFromContext(c->getConstructorParameters());
     removeFromContext(c->getApplyParameters());
     removeFromContext(c->getTypeParameters());
+}
+
+bool ResolveReferences::preorder(const IR::P4PackageModel *model) {
+    refMap->usedName(model->name.name);
+    addToContext(model->getTypeParameters());
+    addToContext(model->getApplyParameters());
+    addToContext(model->getConstructorParameters());
+    addToContext(model); // add the locals
+    return true;
+}
+
+void ResolveReferences::postorder(const IR::P4PackageModel *model) {
+    removeFromContext(model);
+    removeFromContext(model->getConstructorParameters());
+    removeFromContext(model->getApplyParameters());
+    removeFromContext(model->getTypeParameters());
 }
 
 bool ResolveReferences::preorder(const IR::P4Parser *p) {

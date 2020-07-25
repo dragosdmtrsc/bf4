@@ -192,6 +192,13 @@ bool FindSpecializations::isSimpleConstant(const IR::Expression* expr) const {
                 return false;
         return true;
     }
+    if (auto pe = expr->to<IR::PathExpression>()) {
+        auto decl = specMap->refMap->getDeclaration(pe->path);
+        if (decl->is<IR::Declaration_Instance>()) {
+            return true;
+        }
+        return false;
+    }
     return false;
 }
 

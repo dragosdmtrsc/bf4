@@ -53,6 +53,10 @@ class IsLikeLeftValue : public KeyIsSimple, public Inspector {
     void postorder(const IR::Member*) override {}
     void postorder(const IR::PathExpression*) override {}
     void postorder(const IR::ArrayIndex*) override {}
+    bool preorder(const IR::Constant *constant) override {
+      auto prev = findContext<IR::ArrayIndex>();
+      return !(prev && prev->right == constant);
+    }
     profile_t init_apply(const IR::Node* root) override {
         simple = true;
         return Inspector::init_apply(root); }
@@ -88,6 +92,9 @@ class IsMask : public IsLikeLeftValue {
                 expression = mask->left;
             else if (mask->left->is<IR::Constant>())
                 expression = mask->right; }
+        else if (auto slice = expression->to<IR::Slice>()) {
+            auto ctslice = slice->e1->is<IR::Constant>() && slice->e2->is<IR::Constant>();
+            if (ctslice) expression = slice->e0; }
         return IsLikeLeftValue::isSimple(expression, ctxt); }
 };
 

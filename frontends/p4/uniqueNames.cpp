@@ -106,7 +106,8 @@ IR::ID* RenameSymbols::getName() const {
     if (!renameMap->toRename(orig))
         return nullptr;
     auto newName = renameMap->getName(orig);
-    auto name = new IR::ID(orig->getName().srcInfo, newName, orig->getName().originalName);
+    auto name = new IR::ID(orig->getName().srcInfo, newName,
+                           (!dropOriginal ? orig->getName().originalName : nullptr));
     return name;
 }
 
@@ -128,7 +129,8 @@ const IR::Node* RenameSymbols::postorder(IR::Declaration_Constant* decl) {
 const IR::Node* RenameSymbols::postorder(IR::Parameter* param) {
     auto name = getName();
     if (name != nullptr && *name != param->name.name)
-        param->name = IR::ID(param->name.srcInfo, *name, param->name.originalName);
+        param->name = IR::ID(param->name.srcInfo, *name,
+                             (!dropOriginal ? param->name.originalName : nullptr));
     return param;
 }
 
@@ -142,7 +144,7 @@ const IR::Node* RenameSymbols::postorder(IR::PathExpression* expression) {
     LOG2("Renaming " << expression->path);
     auto newName = renameMap->getName(decl);
     auto name = IR::ID(expression->path->name.srcInfo, newName,
-                       expression->path->name.originalName);
+                      (!dropOriginal ? expression->path->name.originalName : nullptr));
     auto result = new IR::PathExpression(name);
     return result;
 }
@@ -203,7 +205,7 @@ const IR::Node* RenameSymbols::postorder(IR::Argument* arg) {
     if (!renameMap->toRename(origParam))
         return arg;
     auto newName = renameMap->getName(origParam);
-    arg->name = IR::ID(arg->name.srcInfo, newName, arg->name.originalName);
+    arg->name = IR::ID(arg->name.srcInfo, newName, (!dropOriginal ? arg->name.originalName : nullptr));
     return arg;
 }
 

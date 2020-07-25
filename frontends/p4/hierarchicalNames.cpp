@@ -16,6 +16,8 @@ limitations under the License.
 
 #include "hierarchicalNames.h"
 
+#include <boost/algorithm/string.hpp>
+
 namespace P4 {
 
 cstring HierarchicalNames::getName(const IR::IDeclaration* decl) {
@@ -29,9 +31,23 @@ const IR::Node* HierarchicalNames::postorder(IR::Annotation* annotation) {
     cstring name = IR::Annotation::getName(annotation);
     if (name.startsWith("."))
         return annotation;
+
+    std::vector<std::string> split;
+    std::string tosplit(name);
+    boost::split(split, tosplit, boost::is_any_of("."));
+    // avoid doubling hierarchical name
+    // if current name already contains component, don't add it
+    if (stack.size() == 1 &&
+        std::any_of(split.begin(), split.end(),
+                    [this](const cstring& x) { return x == stack.back(); })) {
+      return annotation;
+    }
+
     cstring newName = "";
-    for (cstring s : stack)
+    for (cstring s : stack) {
         newName += s + ".";
+    }
+
     newName += name;
     LOG2("Changing " << name << " to " << newName);
     annotation = new IR::Annotation(annotation->name, { new IR::StringLiteral(newName) });
