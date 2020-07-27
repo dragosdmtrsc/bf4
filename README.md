@@ -1,3 +1,6 @@
+## bf4
+[bf4 readme](backends/analysis/README.md)
+
 [![Build Status](https://travis-ci.org/p4lang/p4c.svg?branch=master)](https://travis-ci.org/p4lang/p4c)
 
 # p4c
