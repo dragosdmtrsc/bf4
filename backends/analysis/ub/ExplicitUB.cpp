@@ -18,9 +18,7 @@
 #include <boost/optional/optional.hpp>
 #include <boost/pending/disjoint_sets.hpp>
 #include <boost/range/irange.hpp>
-#include <boost/variant/detail/apply_visitor_delayed.hpp>
-#include <boost/variant/detail/hash_variant.hpp>
-#include <boost/variant/static_visitor.hpp>
+#include <boost/variant/variant.hpp>
 #include <fstream>
 #include <utility>
 #include "../analysis.h"

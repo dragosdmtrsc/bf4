@@ -1373,35 +1373,10 @@ z3::check_result packet_solver_::check() {
   START(solve);
   auto cr = s.check();
   END(solve);
-  START(refine);
-  while (cr == z3::check_result::sat) {
-    auto model = s.get_model();
-    for (const auto &that : theory_atoms) {
-      auto evd = model.eval(that);
-      auto bv = evd.bool_value();
-      if (bv != Z3_L_UNDEF) {
-        auto b = (bv == Z3_L_TRUE);
-        if (that.is_eq()) {
-          if (!b) {
-            std::ofstream dump("dump_wrong.smt");
-            dump << s << '\n';
-            dump << "(check-sat)";
-            dump.close();
-            BUG("can't handle neq in %1%", that);
-          }
-        } else {
-          BUG("can't handle anything other than eq in %1%", that);
-        }
-      }
-    }
-    cr = s.check();
-  }
-  END(refine);
-  auto dref = DURATION(refine);
   auto d = DURATION(solve);
 
   std::cerr << "check result:" << cr << " #assertions:" << s.assertions().size()
-            << " time:" << d << "ms, refined in " << dref << "ms\n";
+            << " time:" << d << "ms\n";
   return cr;
 }
 

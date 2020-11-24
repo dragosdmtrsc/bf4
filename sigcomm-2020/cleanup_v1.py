@@ -33,15 +33,21 @@ parser.add_argument('--std', choices=['p4-16', 'p4-14'])
 parser.add_argument('--psa', action='store_true', help='set if converting to psa, otherwise v1 with field lists')
 parser.add_argument('--validate', action='store_true', help='set if you don\'t want to validate output')
 
-parser.add_argument('--integration-file', default='./v1_integration.p4', 
+parser.add_argument('--integration-file', default='./v1_integration.p4',
     help='select integration file')
 
-parser.add_argument('--cleanup-only', action='store_true', 
+parser.add_argument('--cleanup-only', action='store_true',
     help='only clean up phase')
+
+parser.add_argument(
+    '--bf4-exec', help='location of bf4 exec (default:p4c-analysis)', default='p4c-analysis')
+
+parser.add_argument(
+    '--p4c-bm2-ss-exec', help='location of p4c-bm2-ss exec (default:p4c-bm2-ss)', default='p4c-bm2-ss')
 
 args = parser.parse_args()
 
-arglist=['p4c-bm2-ss']
+arglist=[args.p4c_bm2_ss_exec]
 crt_std = 'p4-16'
 if args.std is not None:
     crt_std = args.std
@@ -85,22 +91,22 @@ echo "integrated ${outdir}/${trimmed}-integrated.p4"
     outinstr = add_suffix_and_join(args.p4file, 'instrumented', outdir)
 
     start = time.time()
-    subprocess.check_call(['p4c-analysis', '--dump-instrumented', outinstr, cleanout],
+    subprocess.check_call([args.bf4_exec, '--dump-instrumented', outinstr, cleanout],
         stderr=DEVNULL, stdout=DEVNULL)
     end = time.time()
     print('done instrumentation in {}ms'.format(int((end - start) * 1000)))
     start = time.time()
     outexpd = add_suffix_and_join(args.p4file, 'instrumented-expanded', outdir)
-    subprocess.check_call(['p4c-analysis', '--expand-to', outexpd, outinstr],
+    subprocess.check_call([args.bf4_exec, '--expand-to', outexpd, outinstr],
         stderr=DEVNULL, stdout=DEVNULL)
     end = time.time()
     print('done primitive expansion in {}ms'.format(int((end - start) * 1000)))
     outintegrated = add_suffix_and_join(args.p4file, 'integrated', outdir)
     start = time.time()
-    subprocess.check_call(['p4c-analysis', '--render-integration', outintegrated,
+    subprocess.check_call([args.bf4_exec, '--render-integration', outintegrated,
             '--integration-template', int_file, '--render-only', outexpd],
         stderr=DEVNULL, stdout=DEVNULL)
     end = time.time()
     print('done integration in {}ms'.format(int((end - start) * 1000)))
     print('All set. To run bf4:')
-    print('p4c-analysis {}'.format(outintegrated))
+    print('{} {}'.format(args.bf4_exec, outintegrated))
