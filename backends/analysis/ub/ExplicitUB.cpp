@@ -1514,6 +1514,18 @@ void analysis::ExplicitUB::analyzeProgram(const IR::P4Program *program) {
       auto path = getPath(model, basicBlocks, basicBlockStart, edgeFormulas);
       auto lastbg = path.back();
       bugid = bugids[lastbg];
+      std::stringstream bugfile;
+      bugfile << "cmds_bug_" << bugid << ".dot";
+      {
+        std::ofstream gout(bugfile.str());
+        NodeValues<int> colors;
+        for (const auto &nd : path) {
+          colors[nd] = GraphPrinter::BLUE;
+        }
+        colors[lastbg] = GraphPrinter::RED;
+        GraphPrinter gp(refMap, typeMap, nullptr, std::move(colors));
+        toDot(basicBlocks, gout, gp);
+      }
       LOG3("bug " << bugid << " reachable");
       for (auto instr : instructions(lastbg)) {
         LOG4("bug " << bugid << ",instr:" << prettyInstr(instr, 2000));
